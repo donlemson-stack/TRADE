@@ -72,24 +72,32 @@ const LiveVoiceChat: React.FC = () => {
     setIsConnecting(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-      
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+      if (!apiKey) {
+        throw new Error('API key not configured');
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
+
+      console.log('[LiveVoiceChat] Attempting to connect to Gemini Live API...');
+
       const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        model: 'models/gemini-2.0-flash-exp',
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } }
           },
           systemInstruction: SYSTEM_PROMPT + "\n\nLIVE VOICE MODE: You are talking to a user. Be warm, ask for their name immediately if you don't know it. Once you know it, use their first name naturally to make the consult feel professional and friendly. Keep answers very concise for voice."
         },
         callbacks: {
           onopen: () => {
+            console.log('[LiveVoiceChat] Session opened successfully');
             setIsConnecting(false);
             setIsActive(true);
             setStatusMessage('End Live Consult');
@@ -97,7 +105,7 @@ const LiveVoiceChat: React.FC = () => {
             mediaStreamSourceRef.current = source;
             const processor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = processor;
-            
+
             processor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
               const base64Pcm = encodePCM(inputData);
@@ -107,25 +115,28 @@ const LiveVoiceChat: React.FC = () => {
                     media: { data: base64Pcm, mimeType: 'audio/pcm;rate=16000' }
                   });
                 }
+              }).catch(err => {
+                console.error('[LiveVoiceChat] Error sending audio:', err);
               });
             };
-            
+
             source.connect(processor);
             processor.connect(inputAudioContextRef.current!.destination);
           },
           onmessage: async (message) => {
+            console.log('[LiveVoiceChat] Received message:', message);
             const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (audioData && audioContextRef.current) {
               const ctx = audioContextRef.current;
               const binary = atob(audioData);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-              
+
               const buffer = await decodeAudioData(bytes, ctx);
               const source = ctx.createBufferSource();
               source.buffer = buffer;
               source.connect(ctx.destination);
-              
+
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += buffer.duration;
@@ -134,19 +145,21 @@ const LiveVoiceChat: React.FC = () => {
             }
 
             if (message.serverContent?.interrupted) {
+              console.log('[LiveVoiceChat] Interrupted, clearing audio queue');
               sourcesRef.current.forEach(s => s.stop());
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
             }
           },
           onclose: () => {
+            console.log('[LiveVoiceChat] Session closed');
             stopSession();
             if (!isError) {
               setStatusMessage('Live Voice Consult');
             }
           },
           onerror: (e) => {
-            console.error("Live Audio Error:", e);
+            console.error("[LiveVoiceChat] Session error:", e);
             setStatusMessage("Network Error. Retry?");
             setIsError(true);
             stopSession();
@@ -162,6 +175,10 @@ const LiveVoiceChat: React.FC = () => {
         msg = "Mic permission denied.";
       } else if (err.message?.includes('permission') || err.message?.includes('403')) {
         msg = "API Permission Error.";
+      } else if (err.message?.includes('API key')) {
+        msg = "API key not found.";
+      } else if (err.message?.includes('not found') || err.message?.includes('404')) {
+        msg = "Model unavailable.";
       }
       setStatusMessage(msg);
       setIsError(true);
