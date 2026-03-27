@@ -1,0 +1,8 @@
+{
+  "name": "DONLEMSONTRADE",
+  "description": "A comprehensive digital assistant for Nigeria international trade, covering imports, exports, regulatory compliance, and professional document processing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
